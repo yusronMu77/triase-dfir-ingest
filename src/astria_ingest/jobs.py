@@ -11,6 +11,8 @@ yang ter-commit (`last_record_no`); ID bukti dan ID event deterministik, jadi ti
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import hashlib
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -22,8 +24,8 @@ from astria_common.component import Check
 from astria_common.db import Database
 from astria_common.log import get_logger
 from astria_common.outbox import enqueue
-from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import select, text, update
+from sqlalchemy.exc import IntegrityError, InterfaceError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from astria_ingest import events
@@ -66,6 +68,15 @@ JOB_GAGAL = "JOB_GAGAL"
 ADAPTER_TIDAK_DIKENAL = "ADAPTER_TIDAK_DIKENAL"
 MAX_ERROR_SAMPLES = 20
 ADAPTERS = {"hayabusa": HAYABUSA_PREFIX}
+RETRY_MIN_S = 1.0
+RETRY_MAX_S = 60.0
+
+_TRANSIENT = (OperationalError, InterfaceError, OSError, TimeoutError)
+"""Galat yang bisa hilang sendiri (koneksi DB putus, I/O gudang). Job tidak ditandai gagal; worker mencoba lagi."""
+
+
+class TransientJobError(Exception):
+    """Job berhenti karena galat sementara; status tetap tertunda (`running`) dan dilanjutkan dari batch terakhir."""
 
 
 class ImportRejected(Exception):
@@ -175,7 +186,11 @@ async def start_import(
     resolved = await asyncio.to_thread(resolve_import_path, settings.import_root, path_ref)
     store_dir = await asyncio.to_thread(ensure_store, settings.evidence_store)
     stored: StoredFile = await asyncio.to_thread(
-        copy_into_store, resolved.path, store_dir, max_file_bytes=limits.max_file_bytes
+        copy_into_store,
+        resolved.path,
+        store_dir,
+        max_file_bytes=limits.max_file_bytes,
+        expect_identity=resolved.identity,
     )
 
     async with engine.connect() as conn:
@@ -188,6 +203,9 @@ async def start_import(
     except FileFormatError as exc:
         await asyncio.to_thread(remove_from_store, stored)
         raise ImportRejected(exc.code, str(exc)) from None
+    except BaseException:
+        await asyncio.to_thread(remove_from_store, stored)  # galat tak terduga: jangan tinggalkan salinan yatim
+        raise
     reason = rejection_reason(scan, settings.reject_ratio)
     if reason is not None:
         await asyncio.to_thread(remove_from_store, stored)
@@ -344,23 +362,69 @@ async def _write_batch(
 
 
 async def run_job(engine: AsyncEngine, settings: Settings, job_id: str) -> str:
-    """Lintasan 2 untuk satu job. Mengembalikan status akhir. Aman dipanggil ulang (lanjut dari batch terakhir)."""
-    async with engine.begin() as conn:
-        row = (
+    """Lintasan 2 untuk satu job. Mengembalikan status akhir. Aman dipanggil ulang (lanjut dari batch terakhir).
+
+    Satu koneksi memegang advisory lock PostgreSQL per job selama job berjalan, dan semua batch ditulis lewat koneksi
+    itu juga. Bila koneksi putus, lock dan tulisan berhenti bersamaan, jadi dua runner (replika lain atau sisa restart)
+    tidak pernah menulis job yang sama. Job yang sedang dipegang runner lain dilewati (mengembalikan `running`).
+
+    Galat sementara (koneksi DB, I/O) melempar `TransientJobError`; job tetap tertunda dan dicoba lagi oleh worker.
+    Galat data atau gudang menandai job `failed` secara permanen.
+    """
+    async with engine.connect() as conn:
+        if not await _try_lock(conn, job_id):
+            return JOB_RUNNING
+        try:
+            return await _run_locked(conn, engine, settings, job_id)
+        finally:
+            await _unlock(conn, job_id)
+
+
+def _lock_key(job_id: str) -> int:
+    """Kunci advisory 64-bit bertanda yang stabil dari `job_id`."""
+    return int.from_bytes(hashlib.sha256(f"ingest-job:{job_id}".encode()).digest()[:8], "big", signed=True)
+
+
+async def _try_lock(conn: AsyncConnection, job_id: str) -> bool:
+    if conn.dialect.name != "postgresql":
+        return True  # SQLite (proses lokal) hanya satu proses
+    try:
+        got = bool(await conn.scalar(text("SELECT pg_try_advisory_lock(:k)"), {"k": _lock_key(job_id)}))
+        await conn.commit()  # akhiri transaksi otomatis; lock level sesi tetap dipegang
+    except _TRANSIENT as exc:
+        raise TransientJobError(type(exc).__name__) from exc
+    return got
+
+
+async def _unlock(conn: AsyncConnection, job_id: str) -> None:
+    if conn.dialect.name != "postgresql":
+        return
+    # Koneksi yang putus melepas lock-nya sendiri; galat di sini tidak boleh menutupi galat utama.
+    with contextlib.suppress(SQLAlchemyError):
+        await conn.rollback()
+        await conn.scalar(text("SELECT pg_advisory_unlock(:k)"), {"k": _lock_key(job_id)})
+        await conn.commit()
+
+
+async def _run_locked(conn: AsyncConnection, engine: AsyncEngine, settings: Settings, job_id: str) -> str:
+    try:
+        async with conn.begin():
+            row = (
+                await conn.execute(
+                    select(ingest_job, raw_source.c.file_sha256, raw_source.c.storage_ref)
+                    .join(raw_source, raw_source.c.source_id == ingest_job.c.source_id)
+                    .where(ingest_job.c.job_id == job_id)
+                )
+            ).first()
+            if row is None or row.status not in JOB_PENDING:
+                return row.status if row is not None else JOB_FAILED
             await conn.execute(
-                select(ingest_job, raw_source.c.file_sha256, raw_source.c.storage_ref)
-                .join(raw_source, raw_source.c.source_id == ingest_job.c.source_id)
+                update(ingest_job)
                 .where(ingest_job.c.job_id == job_id)
-                .with_for_update(of=ingest_job, skip_locked=True)
+                .values(status=JOB_RUNNING, started_at=row.started_at or datetime.now(UTC))
             )
-        ).first()
-        if row is None or row.status not in JOB_PENDING:
-            return row.status if row is not None else JOB_FAILED
-        await conn.execute(
-            update(ingest_job)
-            .where(ingest_job.c.job_id == job_id)
-            .values(status=JOB_RUNNING, started_at=row.started_at or datetime.now(UTC))
-        )
+    except _TRANSIENT as exc:
+        raise TransientJobError(type(exc).__name__) from exc
 
     source_id, file_sha256, requested_by = row.source_id, row.file_sha256, row.requested_by
     path = settings.evidence_store / row.storage_ref
@@ -372,7 +436,7 @@ async def run_job(engine: AsyncEngine, settings: Settings, job_id: str) -> str:
         chunks = _chunks(path, limits, settings.batch_size, row.last_record_no)
         while (item := await asyncio.to_thread(next, chunks, None)) is not None:
             batch_no, lines = item
-            async with engine.begin() as conn:
+            async with conn.begin():
                 await _write_batch(
                     conn,
                     job_id=job_id,
@@ -382,6 +446,9 @@ async def run_job(engine: AsyncEngine, settings: Settings, job_id: str) -> str:
                     lines=lines,
                     limits=limits,
                 )
+    except _TRANSIENT as exc:
+        log.warning("impor_tertunda", job_id=job_id, error=type(exc).__name__)
+        raise TransientJobError(type(exc).__name__) from exc
     except Exception as exc:
         code = exc.code if isinstance(exc, ImportRejected) else JOB_GAGAL
         log.error("impor_gagal", job_id=job_id, error=type(exc).__name__, code=code)
@@ -473,12 +540,20 @@ class ImportWorker:
 
     async def _run(self) -> None:
         await self._db.wait_ready()
+        delay = 0.0
         while True:
-            await self._wake.wait()
+            if delay:
+                # Coba lagi setelah jeda, atau lebih cepat bila ada impor baru yang membangunkan worker.
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._wake.wait(), timeout=delay)
+            else:
+                await self._wake.wait()
             self._wake.clear()
             try:
                 await self.run_pending()
                 self._last_error = None
-            except Exception as exc:  # noqa: BLE001 - dicoba lagi saat dibangunkan berikutnya
+                delay = 0.0
+            except Exception as exc:  # noqa: BLE001 - job tetap tertunda dan dicoba lagi dengan jeda bertambah
                 self._last_error = type(exc).__name__
-                log.warning("import_worker_gagal", error=self._last_error)
+                delay = min(max(delay * 2, RETRY_MIN_S), RETRY_MAX_S)
+                log.warning("import_worker_gagal", error=self._last_error, retry_s=delay)

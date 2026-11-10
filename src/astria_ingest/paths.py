@@ -3,6 +3,10 @@
 Aturan `path_ref`: relatif bergaya POSIX (`chains/a.jsonl`), tanpa `..`/`.`/segmen kosong, tanpa `\\`, `:`, NUL, atau
 karakter kontrol. Setiap komponen diperiksa dengan `lstat` dari root ke bawah: symlink dan junction ditolak di level
 mana pun, komponen antara harus folder, komponen akhir harus berkas biasa. Terakhir `realpath` dipastikan tetap di root.
+
+Pemeriksaan dan pembukaan berkas terjadi di waktu berbeda. `identity` (`st_dev`, `st_ino`) dari pemeriksaan dicocokkan
+dengan `fstat` berkas yang benar-benar dibuka (`store_files.copy_into_store`), jadi komponen yang ditukar dengan symlink
+atau junction di sela waktu itu tertolak.
 """
 
 from __future__ import annotations
@@ -35,6 +39,8 @@ class ResolvedPath:
     """Path absolut berkas di dalam root."""
     ref: str
     """`path_ref` yang sudah diperiksa (bentuk kanonik yang dicatat di DB)."""
+    identity: tuple[int, int] = (0, 0)
+    """`(st_dev, st_ino)` berkas yang diperiksa. Dicocokkan lagi setelah berkas dibuka (menutup celah TOCTOU)."""
 
 
 def _check_ref(ref: object) -> tuple[str, ...]:
@@ -69,6 +75,7 @@ def resolve_import_path(root: Path, ref: object) -> ResolvedPath:
         raise PathRejected(PATH_TIDAK_ADA, "folder impor tidak ada")
 
     current = root_real
+    st = os.lstat(root_real)
     for index, part in enumerate(parts):
         current = current / part
         try:
@@ -88,4 +95,4 @@ def resolve_import_path(root: Path, ref: object) -> ResolvedPath:
     final_real = os.path.realpath(current)
     if os.path.commonpath([final_real, root_real]) != str(root_real):
         raise PathRejected(PATH_DI_LUAR_ROOT, "path keluar dari folder impor")
-    return ResolvedPath(path=current, ref="/".join(parts))
+    return ResolvedPath(path=current, ref="/".join(parts), identity=(st.st_dev, st.st_ino))

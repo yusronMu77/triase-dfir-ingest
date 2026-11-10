@@ -14,6 +14,8 @@ from typing import Any
 from astria_ingest.adapters.hayabusa import LineError
 
 TIMESTAMP_TIDAK_SAH = "TIMESTAMP_TIDAK_SAH"
+MAX_RECORD_ID = 2**63 - 1
+"""Batas kolom BigInteger `record_id`."""
 
 # `2026-11-10 02:14:07.000 +00:00` (-U), zona lokal `+07:00` (tanpa -U), ISO `2026-11-10T02:14:07.000Z` (-O).
 _TIMESTAMP = re.compile(
@@ -92,9 +94,9 @@ def parse_timestamp(value: str) -> datetime:
             if hours > 23 or minutes > 59:
                 raise ValueError
             offset = timezone(sign * timedelta(hours=hours, minutes=minutes))
-    except ValueError:
+        return local.replace(tzinfo=offset).astimezone(UTC)
+    except ValueError, OverflowError:  # OverflowError: mis. 0001-01-01 dengan offset positif
         raise LineError(TIMESTAMP_TIDAK_SAH) from None
-    return local.replace(tzinfo=offset).astimezone(UTC)
 
 
 def severity_of(level: str) -> str:
@@ -134,8 +136,8 @@ def normalize(record: dict[str, Any]) -> NormalizedAlert:
     details = record.get("Details") if isinstance(record.get("Details"), dict) else {}
     extra = record.get("ExtraFieldInfo") if isinstance(record.get("ExtraFieldInfo"), dict) else {}
     record_id = record.get("RecordID")
-    if isinstance(record_id, bool) or not isinstance(record_id, int):
-        record_id = None
+    if isinstance(record_id, bool) or not isinstance(record_id, int) or not 0 <= record_id <= MAX_RECORD_ID:
+        record_id = None  # hanya informasi; baris asli tetap utuh di `raw`
     channel = record["Channel"]
     event_id = record["EventID"]
     return NormalizedAlert(
