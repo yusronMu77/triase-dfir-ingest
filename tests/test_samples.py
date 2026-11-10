@@ -6,6 +6,7 @@ Hash berkas wajib sama dengan manifest samples.
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,8 @@ from astria_ingest.adapters.hayabusa import iter_lines, parse_line
 from astria_ingest.hashing import record_sha256
 from astria_ingest.ids import evidence_id
 from astria_ingest.limits import Limits
+from astria_ingest.normalize import normalize
+from astria_ingest.render import render_excerpt, render_fields
 from astria_ingest.store_files import copy_into_store, ensure_store
 
 FIXTURES = Path(__file__).parent / "fixtures" / "samples"
@@ -47,3 +50,19 @@ def test_svc_backup_shapes() -> None:
     assert any("S0039" in r.get("MitreTags", []) for r in records)
     assert any("T1070.001" in r.get("MitreTags", []) for r in records)
     assert evidence_id("hb01", len(records)) == "EV-hb01-000031"
+
+
+@pytest.mark.parametrize("rel", sorted(FILES))
+def test_samples_normalize_and_render_without_secret(rel: str) -> None:
+    with (FIXTURES / rel).open("rb") as fp:
+        lines = list(iter_lines(fp, Limits()))
+    alerts = [normalize(parse_line(line.raw, Limits())) for line in lines]
+    assert all(a.occurred_at.tzinfo is UTC for a in alerts)
+    assert all(a.kind.startswith("windows.security.") for a in alerts)
+    assert all(a.severity != "unknown" for a in alerts)
+    rendered = "\n".join(render_excerpt(a) + json.dumps(render_fields(a)) for a in alerts)
+    assert "Sintetis-Bukan-Rahasia1" not in rendered
+    # Data asli tetap utuh untuk hash dan gudang (K12, K21).
+    if rel == "chains/svc-backup.jsonl":
+        assert any(b"Sintetis-Bukan-Rahasia1" in line.raw for line in lines)
+        assert any(a.account == "svc-backup" for a in alerts)
