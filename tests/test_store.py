@@ -20,10 +20,19 @@ from astria_common.events import decode
 from astria_contracts.events.evidence_ingested import EvidenceIngested
 from pydantic import SecretStr
 from sqlalchemy import func, select, text, update
+from sqlalchemy.exc import OperationalError
 
-from astria_ingest import store
+from astria_ingest import jobs, store
 from astria_ingest.hashing import batch_sha256, record_sha256
-from astria_ingest.jobs import FORMAT_TIDAK_VALID, ImportRejected, _chunks, _write_batch, run_job, start_import
+from astria_ingest.jobs import (
+    FORMAT_TIDAK_VALID,
+    ImportRejected,
+    TransientJobError,
+    _chunks,
+    _write_batch,
+    run_job,
+    start_import,
+)
 from astria_ingest.settings import Settings
 from astria_ingest.store_files import ensure_store
 
@@ -187,3 +196,78 @@ async def test_bad_lines_are_quarantined(db: Database, settings: Settings) -> No
         row = (await conn.execute(select(store.rejected_record))).one()
     assert (row.record_no, row.code, bytes(row.raw)) == (4, "JSON_RUSAK", b"{rusak}")
     assert await _count(db, store.evidence) == 3
+
+
+async def _status(db: Database, job_id: str) -> tuple[str, int]:
+    async with db.engine.connect() as conn:
+        row = (
+            await conn.execute(
+                select(store.ingest_job.c.status, store.ingest_job.c.last_record_no).where(
+                    store.ingest_job.c.job_id == job_id
+                )
+            )
+        ).one()
+    return row.status, row.last_record_no
+
+
+async def test_transient_error_keeps_job_pending_then_resumes(
+    db: Database, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = await _import(db, settings, _synthetic(settings.import_root, "besar.jsonl", 1200))
+    real = jobs._write_batch
+    calls = 0
+
+    async def flaky(conn, **kw):
+        nonlocal calls
+        calls += 1
+        if calls == 2:  # batch kedua: koneksi "putus"
+            raise OperationalError("SELECT 1", {}, Exception("server closed the connection"))
+        await real(conn, **kw)
+
+    monkeypatch.setattr(jobs, "_write_batch", flaky)
+    with pytest.raises(TransientJobError):
+        await run_job(db.engine, settings, out.job_id)
+    assert await _status(db, out.job_id) == (store.JOB_RUNNING, 500)  # tidak ditandai gagal
+    assert len(await _events(db, "audit.record")) == 0
+
+    assert await run_job(db.engine, settings, out.job_id) == store.JOB_COMPLETED
+    assert await _count(db, store.evidence) == 1200
+    assert len(await _events(db, "evidence.ingested")) == 3
+
+
+async def test_job_held_by_another_runner_is_skipped(db: Database, settings: Settings) -> None:
+    out = await _import(db, settings, "benign/J2.jsonl")
+    async with db.engine.connect() as other:
+        await other.scalar(text("SELECT pg_advisory_lock(:k)"), {"k": jobs._lock_key(out.job_id)})
+        assert await run_job(db.engine, settings, out.job_id) == store.JOB_RUNNING
+        assert await _status(db, out.job_id) == (store.JOB_QUEUED, 0)  # tidak disentuh
+        await other.scalar(text("SELECT pg_advisory_unlock(:k)"), {"k": jobs._lock_key(out.job_id)})
+    assert await run_job(db.engine, settings, out.job_id) == store.JOB_COMPLETED
+
+
+async def test_lock_is_released_after_job(db: Database, settings: Settings) -> None:
+    out = await _import(db, settings, "benign/J2.jsonl")
+    await run_job(db.engine, settings, out.job_id)
+    key = jobs._lock_key(out.job_id) & 0xFFFFFFFFFFFFFFFF  # kunci bigint dipecah ke classid (atas) dan objid (bawah)
+    async with db.engine.connect() as conn:
+        held = await conn.scalar(
+            text(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objsubid = 1"
+                " AND classid::bigint = :hi AND objid::bigint = :lo"
+            ),
+            {"hi": key >> 32, "lo": key & 0xFFFFFFFF},
+        )
+    assert held == 0
+
+
+async def test_unexpected_scan_error_removes_store_copy(
+    db: Database, settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(*_a, **_k):
+        raise RuntimeError("tak terduga")
+
+    monkeypatch.setattr(jobs, "scan_file", boom)
+    with pytest.raises(RuntimeError):
+        await _import(db, settings, "benign/J2.jsonl")
+    assert [p.name for p in settings.evidence_store.iterdir()] == []
+    assert await _count(db, store.raw_source) == 0

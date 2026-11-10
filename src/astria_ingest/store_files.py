@@ -20,6 +20,7 @@ from astria_ingest.hashing import CHUNK_BYTES, SHA256_HEX
 BERKAS_TERLALU_BESAR = "BERKAS_TERLALU_BESAR"
 BERKAS_TIDAK_TERBACA = "BERKAS_TIDAK_TERBACA"
 GUDANG_TIDAK_KONSISTEN = "GUDANG_TIDAK_KONSISTEN"
+BERKAS_BERUBAH = "BERKAS_BERUBAH"
 
 _OPEN_FLAGS = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
 
@@ -50,8 +51,14 @@ def stored_path(store_dir: Path, sha256: str) -> Path:
     return store_dir / sha256
 
 
-def copy_into_store(src: Path, store_dir: Path, *, max_file_bytes: int) -> StoredFile:
-    """Salin `src` ke gudang sambil menghitung SHA-256. Batas ukuran dicek sebelum dan selama membaca."""
+def copy_into_store(
+    src: Path, store_dir: Path, *, max_file_bytes: int, expect_identity: tuple[int, int] | None = None
+) -> StoredFile:
+    """Salin `src` ke gudang sambil menghitung SHA-256. Batas ukuran dicek sebelum dan selama membaca.
+
+    `expect_identity` (`st_dev`, `st_ino`) dari penjaga path: berkas yang terbuka harus berkas yang sama dengan yang
+    diperiksa. Inode 0 (sistem berkas yang tidak memberinya) tidak dicocokkan.
+    """
     try:
         fd = os.open(src, _OPEN_FLAGS)
     except OSError:
@@ -61,6 +68,9 @@ def copy_into_store(src: Path, store_dir: Path, *, max_file_bytes: int) -> Store
     if not stat.S_ISREG(st.st_mode):
         os.close(fd)
         raise StoreError(BERKAS_TIDAK_TERBACA, "bukan berkas biasa")
+    if expect_identity is not None and expect_identity[1] and (st.st_dev, st.st_ino) != expect_identity:
+        os.close(fd)
+        raise StoreError(BERKAS_BERUBAH, "berkas berubah antara pemeriksaan path dan pembukaan")
     with os.fdopen(fd, "rb") as fp:
         if st.st_size > max_file_bytes:
             raise StoreError(BERKAS_TERLALU_BESAR, "berkas melebihi batas ukuran")

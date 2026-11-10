@@ -12,6 +12,7 @@ divalidasi di sini.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, BinaryIO, Literal
@@ -40,6 +41,9 @@ FIELD_WAJIB = "FIELD_WAJIB"
 REQUIRED_TEXT = ("Timestamp", "RuleTitle", "Level", "Computer", "Channel")
 """Field teks wajib (profil apa pun). `EventID` wajib berupa bilangan bulat."""
 
+MAX_EVENT_ID = 65_535
+"""EventID Windows 16 bit. Di luar rentang ditolak per baris (bukan gagal saat INSERT ke kolom int)."""
+
 
 class FileFormatError(Exception):
     def __init__(self, code: str, message: str) -> None:
@@ -66,7 +70,9 @@ def iter_lines(fp: BinaryIO, limits: Limits) -> Iterator[Line]:
 
     Melempar `FileFormatError` untuk UTF-16/32 atau jumlah baris yang melewati batas.
     """
-    read_limit = limits.max_line_bytes + 2  # muat juga "\r\n"
+    line_limit = limits.max_line_bytes + 2  # muat juga "\r\n"
+    # Baris 1 boleh diawali BOM UTF-8 yang dibuang sebelum diukur, jadi jatah bacanya ditambah panjang BOM.
+    read_limit = line_limit + len(BOM_UTF8)
     record_no = 0
     while chunk := fp.readline(read_limit):
         record_no += 1
@@ -78,6 +84,9 @@ def iter_lines(fp: BinaryIO, limits: Limits) -> Iterator[Line]:
                 raise FileFormatError(ENCODING_TIDAK_DIDUKUNG, "berkas harus UTF-8 (UTF-16/32 tidak didukung)")
             if chunk.startswith(BOM_UTF8):
                 chunk = chunk[len(BOM_UTF8) :]
+            elif not truncated and not chunk.endswith(b"\n") and len(chunk) >= line_limit:
+                truncated = True  # tanpa BOM, jatah baris 1 sama dengan baris lain
+            read_limit = line_limit
 
         if truncated:
             _drain_line(fp)
@@ -123,6 +132,14 @@ def _reject_constant(_name: str) -> Any:
     raise _BadConstant
 
 
+def _finite_float(text: str) -> float:
+    """Angka yang meluap (mis. `1e999`) menjadi inf, dan JSONB tidak bisa menyimpannya."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise _BadConstant
+    return value
+
+
 def _check_tree(value: Any, max_depth: int) -> None:
     """Kedalaman dan teks (surrogate tunggal tidak bisa di-encode UTF-8) diperiksa iteratif, tanpa rekursi."""
     stack: list[tuple[Any, int]] = [(value, 1)]
@@ -143,6 +160,9 @@ def _check_tree(value: Any, max_depth: int) -> None:
 
 
 def _check_text(text: str) -> None:
+    """Surrogate tunggal tidak bisa di-encode UTF-8; NUL ditolak PostgreSQL di kolom teks dan JSONB."""
+    if "\x00" in text:
+        raise LineError(TEKS_TIDAK_SAH)
     try:
         text.encode("utf-8")
     except UnicodeEncodeError:
@@ -156,7 +176,9 @@ def parse_line(raw: bytes, limits: Limits) -> dict[str, Any]:
     except UnicodeDecodeError:
         raise LineError(UTF8_RUSAK) from None
     try:
-        value = json.loads(text, object_pairs_hook=_no_duplicates, parse_constant=_reject_constant)
+        value = json.loads(
+            text, object_pairs_hook=_no_duplicates, parse_constant=_reject_constant, parse_float=_finite_float
+        )
     except _DuplicateKey:
         raise LineError(KEY_GANDA) from None
     except _BadConstant:
@@ -175,6 +197,6 @@ def parse_line(raw: bytes, limits: Limits) -> dict[str, Any]:
         if not isinstance(item, str) or not item.strip():
             raise LineError(FIELD_WAJIB)
     event_id = value.get("EventID")
-    if isinstance(event_id, bool) or not isinstance(event_id, int):
+    if isinstance(event_id, bool) or not isinstance(event_id, int) or not 0 <= event_id <= MAX_EVENT_ID:
         raise LineError(FIELD_WAJIB)
     return value
