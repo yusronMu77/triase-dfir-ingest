@@ -258,60 +258,72 @@ async def _write_batch(
     limits: Limits,
 ) -> None:
     hashes: list[str] = []
+    rejected_rows: list[dict[str, Any]] = []
+    evidence_rows: list[dict[str, Any]] = []
+    alert_rows: list[dict[str, Any]] = []
+    link_rows: list[dict[str, Any]] = []
     for line in lines:
         outcome = _evaluate(line, limits)
         if outcome is None:
             continue
         if isinstance(outcome, str):
             raw = line.raw if line.kind == "data" else None
-            await conn.execute(
-                rejected_record.insert().values(source_id=source_id, record_no=line.record_no, code=outcome, raw=raw)
-            )
+            rejected_rows.append({"source_id": source_id, "record_no": line.record_no, "code": outcome, "raw": raw})
             continue
         a = outcome
         eid = evidence_id(source_id, line.record_no)
         aid = alert_id(source_id, line.record_no)
         digest = record_sha256(line.raw)
         hashes.append(digest)
-        await conn.execute(
-            evidence.insert().values(
-                evidence_id=eid,
-                source_id=source_id,
-                record_no=line.record_no,
-                record_sha256=digest,
-                raw=line.raw,
-                occurred_at=a.occurred_at,
-                host=a.host,
-                account=a.account,
-                kind=a.kind,
-                event_id=a.event_id,
-                record_id=a.record_id,
-                src_ip=a.src_ip,
-                details=a.details,
-                extra=a.extra,
-            )
+        evidence_rows.append(
+            {
+                "evidence_id": eid,
+                "source_id": source_id,
+                "record_no": line.record_no,
+                "record_sha256": digest,
+                "raw": line.raw,
+                "occurred_at": a.occurred_at,
+                "host": a.host,
+                "account": a.account,
+                "kind": a.kind,
+                "event_id": a.event_id,
+                "record_id": a.record_id,
+                "src_ip": a.src_ip,
+                "details": a.details,
+                "extra": a.extra,
+            }
         )
-        await conn.execute(
-            alert.insert().values(
-                alert_id=aid,
-                source_id=source_id,
-                record_no=line.record_no,
-                rule_id=a.rule_id,
-                rule_title=a.rule_title,
-                rule_file=a.rule_file,
-                level=a.level,
-                severity=a.severity,
-                tactics=list(a.tactics),
-                techniques=list(a.mitre_tags),
-                other_tags=list(a.other_tags),
-                occurred_at=a.occurred_at,
-                host=a.host,
-                account=a.account,
-                src_ip=a.src_ip,
-                kind=a.kind,
-            )
+        alert_rows.append(
+            {
+                "alert_id": aid,
+                "source_id": source_id,
+                "record_no": line.record_no,
+                "rule_id": a.rule_id,
+                "rule_title": a.rule_title,
+                "rule_file": a.rule_file,
+                "level": a.level,
+                "severity": a.severity,
+                "tactics": list(a.tactics),
+                "techniques": list(a.mitre_tags),
+                "other_tags": list(a.other_tags),
+                "occurred_at": a.occurred_at,
+                "host": a.host,
+                "account": a.account,
+                "src_ip": a.src_ip,
+                "kind": a.kind,
+            }
         )
-        await conn.execute(alert_evidence.insert().values(alert_id=aid, evidence_id=eid))
+        link_rows.append({"alert_id": aid, "evidence_id": eid})
+
+    # Satu executemany per tabel (urutan mengikuti foreign key), bukan beberapa INSERT per baris.
+    for table, rows in (
+        (rejected_record, rejected_rows),
+        (evidence, evidence_rows),
+        (alert, alert_rows),
+        (alert_evidence, link_rows),
+    ):
+        if rows:
+            await conn.execute(table.insert(), rows)
 
     last = lines[-1].record_no
     if hashes:

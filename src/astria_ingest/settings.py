@@ -17,8 +17,9 @@ class Settings(AstriaSettings):
     import_root: Path = Path("/data/import")
     """Folder impor (mount read-only). `path_ref` dari pemanggil selalu relatif terhadap folder ini (K15)."""
 
-    evidence_store: Path = Path("/data/evidence")
-    """Gudang bukti content-addressed milik ingest (read-write, K21)."""
+    evidence_store: Path = Path("/var/lib/astria/ingest/evidence")
+    """Gudang bukti content-addressed milik ingest (read-write, K21). Induknya `/var/lib/astria/ingest` sudah ada di
+    image (milik uid 10001), jadi cukup satu volume di sana; rootfs kontainer read-only."""
 
     max_file_bytes: int = Field(1024 * MIB, ge=1)
     max_line_bytes: int = Field(1 * MIB, ge=1)
