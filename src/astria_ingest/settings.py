@@ -35,7 +35,7 @@ class Settings(AstriaSettings):
     import_callers: list[str] = ["svc:api", "svc:seed", "svc:devtools"]
     """Boleh memulai impor dan membaca status job (K18). `svc:devtools` sementara sampai `svc:seed` ada (K20)."""
 
-    read_callers: list[str] = ["svc:triage", "svc:verifier", "svc:api"]
+    read_callers: list[str] = ["svc:triage", "svc:verifier", "svc:api", "svc:dfir"]
     """Boleh membaca bukti dan alert (K18)."""
 
     @property
