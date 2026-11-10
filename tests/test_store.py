@@ -17,7 +17,6 @@ import pytest
 from astria_common import outbox
 from astria_common.db import Database
 from astria_common.events import decode
-from astria_contracts.events.evidence_ingested import EvidenceIngested
 from pydantic import SecretStr
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import OperationalError
@@ -47,11 +46,6 @@ LINE = (
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not DB_URL, reason="ASTRIA_TEST_DATABASE_URL tidak diisi"),
-    pytest.mark.xfail(
-        "file_sha256" not in EvidenceIngested.model_fields,
-        reason="butuh astria-contracts v0.2.0 (contracts#5) lewat rilis common baru",
-        strict=True,
-    ),
 ]
 
 
