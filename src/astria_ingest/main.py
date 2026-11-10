@@ -1,20 +1,23 @@
 """Rakit aplikasi ingest.
 
-Tahap 0: komponen standar dan, khusus dev, endpoint yang menerbitkan `evidence.ingested` contoh lewat
-outbox. Adapter Hayabusa, penyimpanan bukti, dan API baca bukti dibangun di Tahap 1.
+Komponen standar (basis data, bus, relay outbox), tabel ingest (`store.metadata`), dan `ImportWorker` yang menjalankan
+lintasan 2 impor di latar. Khusus dev: endpoint yang menerbitkan `evidence.ingested` contoh lewat outbox.
 """
 
 from astria_common.app import create_app
 from astria_common.service import standard_runtime
 from fastapi import FastAPI
 
-from astria_ingest import api, dev
+from astria_ingest import api, dev, store
+from astria_ingest.jobs import ImportWorker
 from astria_ingest.settings import Settings
 
 
 def build_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
-    runtime = standard_runtime(settings)
+    runtime = standard_runtime(settings, metadata=[store.metadata])
+    if runtime.db is not None:
+        runtime.add(ImportWorker(runtime.db, settings))
     routers = [api.router]
     if settings.dev_endpoints:
         routers.append(dev.router)

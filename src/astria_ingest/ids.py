@@ -32,6 +32,11 @@ def evidence_id(source: str, record_no: int) -> str:
     return f"EV-{source}-{record_no:06d}"
 
 
+def alert_id(source: str, record_no: int) -> str:
+    """ID alert sejajar dengan ID bukti (Hayabusa: satu baris = satu alert = satu bukti, K4)."""
+    return "AL-" + evidence_id(source, record_no).removeprefix("EV-")
+
+
 def parse_evidence_id(value: str) -> tuple[str, int] | None:
     """(kode sumber, record_no) atau None bila formatnya salah. Nomor 000000 ditolak."""
     m = EVIDENCE_ID.fullmatch(value)
