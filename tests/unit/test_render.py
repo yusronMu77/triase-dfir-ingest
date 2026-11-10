@@ -11,8 +11,7 @@ from astria_ingest.render import (
     TRUNCATED,
     clean,
     redact,
-    render_excerpt,
-    render_fields,
+    render_alert,
     strip_controls,
 )
 
@@ -100,7 +99,7 @@ def _alert(**details: Any) -> Any:
 
 
 def test_render_fields_flatten_and_redact() -> None:
-    fields = render_fields(_alert(Cmdline=f"net user adm-support {SECRET} /add", PID=4312, User="svc-backup"))
+    fields, _ = render_alert(_alert(Cmdline=f"net user adm-support {SECRET} /add", PID=4312, User="svc-backup"))
     assert fields["Cmdline"] == f"net user adm-support {MASK} /add"
     assert fields["PID"] == "4312"
     assert fields["Nested.A"] == "1, dua"
@@ -109,9 +108,9 @@ def test_render_fields_flatten_and_redact() -> None:
 
 
 def test_render_excerpt() -> None:
-    excerpt = render_excerpt(_alert(Cmdline=f"net user adm-support {SECRET} /add\n\u202eevil", User="svc-backup"))
+    _, excerpt = render_alert(_alert(Cmdline=f"net user adm-support {SECRET} /add\n\u202eevil", User="svc-backup"))
     assert excerpt.startswith("EventID=4688 New User Created Via Net.EXE")
     assert "User=svc-backup" in excerpt
     assert SECRET not in excerpt
     assert "\n" not in excerpt and "\u202e" not in excerpt
-    assert len(render_excerpt(_alert(Cmdline="y" * 5000))) <= MAX_EXCERPT_CHARS
+    assert len(render_alert(_alert(Cmdline="y" * 5000))[1]) <= MAX_EXCERPT_CHARS

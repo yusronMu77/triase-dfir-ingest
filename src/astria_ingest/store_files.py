@@ -56,10 +56,12 @@ def copy_into_store(src: Path, store_dir: Path, *, max_file_bytes: int) -> Store
         fd = os.open(src, _OPEN_FLAGS)
     except OSError:
         raise StoreError(BERKAS_TIDAK_TERBACA, "berkas tidak dapat dibuka") from None
+    # Di Linux `os.open` pada folder berhasil; cek jenis lewat fd mentah sebelum `fdopen` (yang menolak folder).
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
+        os.close(fd)
+        raise StoreError(BERKAS_TIDAK_TERBACA, "bukan berkas biasa")
     with os.fdopen(fd, "rb") as fp:
-        st = os.fstat(fp.fileno())
-        if not stat.S_ISREG(st.st_mode):
-            raise StoreError(BERKAS_TIDAK_TERBACA, "bukan berkas biasa")
         if st.st_size > max_file_bytes:
             raise StoreError(BERKAS_TERLALU_BESAR, "berkas melebihi batas ukuran")
 

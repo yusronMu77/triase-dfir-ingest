@@ -63,7 +63,7 @@ def settings(tmp_path: Path) -> Settings:
     root = tmp_path / "import"
     shutil.copytree(FIXTURES, root)
     ensure_store(tmp_path / "gudang")
-    return Settings(import_root=root, evidence_store=tmp_path / "gudang", batch_size=500)
+    return Settings(env="test", import_root=root, evidence_store=tmp_path / "gudang", batch_size=500)
 
 
 def _synthetic(root: Path, name: str, lines: int, extra: bytes = b"") -> str:

@@ -16,7 +16,7 @@ from astria_ingest.hashing import record_sha256
 from astria_ingest.ids import evidence_id
 from astria_ingest.limits import Limits
 from astria_ingest.normalize import normalize
-from astria_ingest.render import render_excerpt, render_fields
+from astria_ingest.render import render_alert
 from astria_ingest.store_files import copy_into_store, ensure_store
 
 FIXTURES = Path(__file__).parent / "fixtures" / "samples"
@@ -60,7 +60,7 @@ def test_samples_normalize_and_render_without_secret(rel: str) -> None:
     assert all(a.occurred_at.tzinfo is UTC for a in alerts)
     assert all(a.kind.startswith("windows.security.") for a in alerts)
     assert all(a.severity != "unknown" for a in alerts)
-    rendered = "\n".join(render_excerpt(a) + json.dumps(render_fields(a)) for a in alerts)
+    rendered = "\n".join(render_alert(a)[1] + json.dumps(render_alert(a)[0]) for a in alerts)
     assert "Sintetis-Bukan-Rahasia1" not in rendered
     # Data asli tetap utuh untuk hash dan gudang (K12, K21).
     if rel == "chains/svc-backup.jsonl":
