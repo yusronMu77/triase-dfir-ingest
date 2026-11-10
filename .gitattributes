@@ -2,3 +2,6 @@
 
 *.cmd text eol=crlf
 *.bat text eol=crlf
+
+# Fixture bukti: bytes harus identik dengan sumbernya (hash dibandingkan dengan manifest)
+tests/fixtures/** -text
