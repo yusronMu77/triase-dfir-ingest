@@ -1,6 +1,6 @@
 """API dengan PostgreSQL sungguhan: impor lewat HTTP, worker, lalu baca bukti dan alert seperti verifier dan triage.
 
-Dilewati tanpa `ASTRIA_TEST_DATABASE_URL`; `xfail` strict sampai `astria-contracts` v0.2.0 tersedia lewat `common`.
+Dilewati tanpa `ASTRIA_TEST_DATABASE_URL`.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from astria_common.auth import (
     load_or_create_signing_key,
 )
 from astria_common.db import Database
-from astria_contracts.events.evidence_ingested import EvidenceIngested
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import text
@@ -34,11 +33,6 @@ FIXTURES = Path(__file__).parent / "fixtures" / "samples"
 
 pytestmark = [
     pytest.mark.skipif(not DB_URL, reason="ASTRIA_TEST_DATABASE_URL tidak diisi"),
-    pytest.mark.xfail(
-        "file_sha256" not in EvidenceIngested.model_fields,
-        reason="butuh astria-contracts v0.2.0 (contracts#5) lewat rilis common baru",
-        strict=True,
-    ),
 ]
 
 
