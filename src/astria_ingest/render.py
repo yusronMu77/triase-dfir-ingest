@@ -85,17 +85,22 @@ def flatten(value: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
     return out
 
 
-def render_fields(alert: NormalizedAlert) -> dict[str, str]:
+def render_fields(details: Mapping[str, Any], extra: Mapping[str, Any]) -> dict[str, str]:
     """`Details` lalu `ExtraFieldInfo` diratakan ke string tersanitasi. `Details` menang bila nama sama."""
-    merged = flatten(alert.extra) | flatten(alert.details)
+    merged = flatten(extra) | flatten(details)
     fields: dict[str, str] = {}
     for key in list(merged)[:MAX_FIELDS]:
         fields[clean(key, 128)] = clean(merged[key])
     return fields
 
 
-def render_excerpt(alert: NormalizedAlert) -> str:
-    """Kutipan ringkas untuk manusia dan verifier: aturan, EventID, lalu isi `Details` (tersanitasi)."""
-    parts = [f"EventID={alert.event_id}", alert.rule_title]
-    parts.extend(f"{key}={value}" for key, value in flatten(alert.details).items())
+def render_excerpt(event_id: int, rule_title: str, details: Mapping[str, Any]) -> str:
+    """Kutipan ringkas untuk manusia dan verifier: EventID, aturan, lalu isi `Details` (tersanitasi)."""
+    parts = [f"EventID={event_id}", rule_title]
+    parts.extend(f"{key}={value}" for key, value in flatten(details).items())
     return clean(" ".join(str(p) for p in parts), MAX_EXCERPT_CHARS)
+
+
+def render_alert(alert: NormalizedAlert) -> tuple[dict[str, str], str]:
+    """(fields, excerpt) untuk satu alert hasil normalisasi."""
+    return render_fields(alert.details, alert.extra), render_excerpt(alert.event_id, alert.rule_title, alert.details)
