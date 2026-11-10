@@ -69,11 +69,14 @@ def test_wrong_audience(client: TestClient, key: SigningKey, method: str, path: 
 
 
 @pytest.mark.parametrize(("method", "path", "body", "kind"), ENDPOINTS)
-@pytest.mark.parametrize("subject", ["svc:notifier", "svc:triage", "svc:seed", "svc:verifier"])
+@pytest.mark.parametrize("subject", ["svc:notifier", "svc:triage", "svc:seed", "svc:verifier", "svc:dfir"])
 def test_caller_allowlist(
     client: TestClient, key: SigningKey, method: str, path: str, body: Any, kind: str, subject: str
 ) -> None:
-    allowed = {"import": {"svc:api", "svc:seed", "svc:devtools"}, "read": {"svc:triage", "svc:verifier", "svc:api"}}
+    allowed = {
+        "import": {"svc:api", "svc:seed", "svc:devtools"},
+        "read": {"svc:triage", "svc:verifier", "svc:api", "svc:dfir"},
+    }
     resp = _call(client, method, path, body, _auth(key, subject))
     if subject in allowed[kind]:
         assert resp.status_code == 503  # lolos auth; tanpa basis data di uji ini

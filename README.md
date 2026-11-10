@@ -57,7 +57,7 @@ Semua endpoint wajib token layanan untuk audiens `svc:ingest`, lalu nama pemangg
 |---|---|---|
 | `POST /imports` `{"adapter":"hayabusa","path_ref":"chains/a.jsonl"}` | `import_callers`: `svc:api`, `svc:seed`, `svc:devtools` | `202` job baru, `200` berkas yang sama sudah diimpor, `413` terlalu besar, `422` path atau isi ditolak |
 | `GET /imports/{job_id}` | `import_callers` | Status (`queued`, `running`, `completed`, `completed_with_errors`, `failed`), progres, statistik, contoh galat tanpa isi baris |
-| `POST /evidence:batch` `{"ids":[...]}` (maks 500) | `read_callers`: `svc:triage`, `svc:verifier`, `svc:api` | `{items, not_found}`; item berisi hash, host, account, kind, fields, excerpt tersanitasi |
+| `POST /evidence:batch` `{"ids":[...]}` (maks 500) | `read_callers`: `svc:triage`, `svc:verifier`, `svc:api`, `svc:dfir` | `{items, not_found}`; item berisi hash, host, account, kind, fields, excerpt tersanitasi |
 | `GET /jobs/{job_id}/alerts?from=&to=&cursor=&limit=` (maks 500) | `read_callers` | Alert berurutan `record_no` dengan `next_cursor`; `from`/`to` mengikuti `batch_ref` di event |
 
 `svc:devtools` di daftar impor hanya sementara, sampai principal `svc:seed` tersedia di identity.

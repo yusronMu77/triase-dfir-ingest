@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `read_callers` bawaan menambah `svc:dfir`: dfir membaca bukti kartu lewat `POST /svc/v1/evidence:batch` untuk linimasa dan rantai penguasaan (dfir#2).
+
 ### Added
 
 - Impor Hayabusa JSONL (ingest#2): `POST /svc/v1/imports` dan `GET /svc/v1/imports/{job_id}`, penjaga path (tanpa `..` dan symlink, identitas berkas dicocokkan setelah dibuka), gudang bukti content-addressed dengan SHA-256, impor ulang berkas yang sama idempoten.
