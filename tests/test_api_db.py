@@ -136,3 +136,11 @@ def test_unknown_job_is_404(setup) -> None:
     client, key = setup
     resp = client.get("/svc/v1/imports/ING-20261110-00000000", headers=_auth(key, "svc:api"))
     assert resp.status_code == 404
+
+
+def test_import_rejects_unexpected_sha256(setup) -> None:
+    client, key = setup
+    body = {"adapter": "hayabusa", "path_ref": "chains/svc-backup.jsonl", "expected_sha256": "0" * 64}
+    resp = client.post("/svc/v1/imports", json=body, headers=_auth(key, "svc:api"))
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "SHA256_TIDAK_COCOK"

@@ -129,6 +129,43 @@ async def test_reimport_is_idempotent(db: Database, settings: Settings) -> None:
     assert len(await _events(db, "evidence.ingested")) == 1
 
 
+async def test_expected_sha256_must_match(db: Database, settings: Settings) -> None:
+    wrong = "0" * 64
+    with pytest.raises(ImportRejected) as rejected:
+        await start_import(
+            db.engine,
+            settings,
+            adapter="hayabusa",
+            path_ref="chains/svc-backup.jsonl",
+            requested_by="svc:api",
+            expected_sha256=wrong,
+        )
+    assert rejected.value.code == "SHA256_TIDAK_COCOK"
+    assert await _count(db, store.raw_source) == await _count(db, store.ingest_job) == 0
+    assert not (settings.evidence_store / SVC_BACKUP_SHA).exists()  # salinan baru dibuang
+
+    ok = await start_import(
+        db.engine,
+        settings,
+        adapter="hayabusa",
+        path_ref="chains/svc-backup.jsonl",
+        requested_by="svc:api",
+        expected_sha256=SVC_BACKUP_SHA,
+    )
+    assert (ok.file_sha256, ok.created) == (SVC_BACKUP_SHA, True)
+    # Berkas yang sudah diimpor tetap ditolak bila pemanggil mengharapkan isi lain; salinan lama tidak terhapus.
+    with pytest.raises(ImportRejected):
+        await start_import(
+            db.engine,
+            settings,
+            adapter="hayabusa",
+            path_ref="chains/svc-backup.jsonl",
+            requested_by="svc:api",
+            expected_sha256=wrong,
+        )
+    assert (settings.evidence_store / SVC_BACKUP_SHA).exists()
+
+
 async def test_batches_and_second_source(db: Database, settings: Settings) -> None:
     await run_job(db.engine, settings, (await _import(db, settings, "benign/J2.jsonl")).job_id)
     out = await _import(db, settings, _synthetic(settings.import_root, "besar.jsonl", 1200))

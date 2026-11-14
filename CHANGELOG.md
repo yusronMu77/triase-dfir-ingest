@@ -9,7 +9,7 @@
 ### Added
 
 - Golden dataset samples#4: 15 berkas (R1-R7, J1-J6, D1/H1), hash manifest dan normalisasi log Security/System.
-
+- `POST /svc/v1/imports` menerima `expected_sha256` opsional (hex kecil 64): bila berbeda dari SHA-256 isi berkas, impor ditolak 422 `SHA256_TIDAK_COCOK` sebelum job dibuat dan salinan baru di gudang dibuang (api#12; kontrak `contracts/openapi/ingest-internal.yaml`).
 - Impor Hayabusa JSONL (ingest#2): `POST /svc/v1/imports` dan `GET /svc/v1/imports/{job_id}`, penjaga path (tanpa `..` dan symlink, identitas berkas dicocokkan setelah dibuka), gudang bukti content-addressed dengan SHA-256, impor ulang berkas yang sama idempoten.
 - Parser dan normalisasi Hayabusa: batas ukuran, baris, dan kedalaman; tolak key ganda, NaN/Infinity, NUL, surrogate tunggal, EventID dan waktu di luar rentang; karantina baris rusak di `rejected_record`.
 - Job dua lintasan: pindai lalu tulis per 500 baris dalam satu transaksi, satu `evidence.ingested` (dengan `file_sha256` dan `batch_sha256`) per batch lewat outbox, audit `ingest.file.imported`/`ingest.file.failed`; lanjut setelah restart, advisory lock per job, coba ulang galat sementara.
