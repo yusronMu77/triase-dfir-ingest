@@ -95,6 +95,9 @@ def test_caller_allowlist(
         {"adapter": "hayabusa", "path_ref": "a.jsonl", "lain": 1},
         {"adapter": "hayabusa"},
         {"adapter": "hayabusa", "path_ref": 5},
+        {"adapter": "hayabusa", "path_ref": "a.jsonl", "expected_sha256": "bukanhex"},
+        {"adapter": "hayabusa", "path_ref": "a.jsonl", "expected_sha256": "A" * 64},
+        {"adapter": "hayabusa", "path_ref": "a.jsonl", "expected_sha256": "a" * 63},
     ],
 )
 def test_import_body_validation(client: TestClient, key: SigningKey, body: dict[str, Any]) -> None:

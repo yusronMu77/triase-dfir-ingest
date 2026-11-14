@@ -72,6 +72,8 @@ class ImportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     adapter: Literal["hayabusa"]
     path_ref: str = Field(min_length=1, max_length=1024)
+    expected_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    """SHA-256 yang diharapkan pemanggil. Bila diisi dan berbeda dari isi berkas, impor ditolak sebelum job dibuat."""
 
 
 class ImportResponse(BaseModel):
@@ -91,7 +93,12 @@ async def create_import(
     settings: Settings = request.app.state.settings
     try:
         outcome = await start_import(
-            engine, settings, adapter=body.adapter, path_ref=body.path_ref, requested_by=caller.subject
+            engine,
+            settings,
+            adapter=body.adapter,
+            path_ref=body.path_ref,
+            requested_by=caller.subject,
+            expected_sha256=body.expected_sha256,
         )
     except PathRejected as exc:
         raise AstriaError(exc.code, str(exc), 422) from None

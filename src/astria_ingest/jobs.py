@@ -66,6 +66,7 @@ FORMAT_TIDAK_VALID = "FORMAT_TIDAK_VALID"
 GUDANG_TIDAK_KONSISTEN = "GUDANG_TIDAK_KONSISTEN"
 JOB_GAGAL = "JOB_GAGAL"
 ADAPTER_TIDAK_DIKENAL = "ADAPTER_TIDAK_DIKENAL"
+SHA256_TIDAK_COCOK = "SHA256_TIDAK_COCOK"
 MAX_ERROR_SAMPLES = 20
 ADAPTERS = {"hayabusa": HAYABUSA_PREFIX}
 RETRY_MIN_S = 1.0
@@ -176,9 +177,19 @@ async def _existing(conn: AsyncConnection, file_sha256: str) -> ImportOutcome | 
 
 
 async def start_import(
-    engine: AsyncEngine, settings: Settings, *, adapter: str, path_ref: object, requested_by: str
+    engine: AsyncEngine,
+    settings: Settings,
+    *,
+    adapter: str,
+    path_ref: object,
+    requested_by: str,
+    expected_sha256: str | None = None,
 ) -> ImportOutcome:
-    """Lintasan 1. Melempar `PathRejected`, `StoreError`, atau `ImportRejected`; tidak menulis apa pun bila ditolak."""
+    """Lintasan 1. Melempar `PathRejected`, `StoreError`, atau `ImportRejected`; tidak menulis apa pun bila ditolak.
+
+    `expected_sha256` diisi: isi berkas harus ber-SHA-256 itu, kalau tidak `SHA256_TIDAK_COCOK` (juga untuk berkas yang
+    pernah diimpor, karena pemanggil mengharapkan berkas lain).
+    """
     prefix = ADAPTERS.get(adapter)
     if prefix is None:
         raise ImportRejected(ADAPTER_TIDAK_DIKENAL, "adapter tidak dikenal")
@@ -192,6 +203,9 @@ async def start_import(
         max_file_bytes=limits.max_file_bytes,
         expect_identity=resolved.identity,
     )
+    if expected_sha256 is not None and stored.sha256 != expected_sha256.lower():
+        await asyncio.to_thread(remove_from_store, stored)
+        raise ImportRejected(SHA256_TIDAK_COCOK, "SHA-256 berkas tidak sama dengan yang diharapkan")
 
     async with engine.connect() as conn:
         found = await _existing(conn, stored.sha256)
