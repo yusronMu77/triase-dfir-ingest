@@ -1,4 +1,4 @@
-"""Tes golden: tiga berkas samples (bentuk keluaran Hayabusa v4.3.1 asli) terbaca utuh.
+"""Tes golden: 15 berkas sintetis samples#4 dalam format Hayabusa v4.3.1 terbaca utuh.
 
 Hash berkas wajib sama dengan manifest samples.
 """
@@ -56,9 +56,12 @@ def test_svc_backup_shapes() -> None:
 def test_samples_normalize_and_render_without_secret(rel: str) -> None:
     with (FIXTURES / rel).open("rb") as fp:
         lines = list(iter_lines(fp, Limits()))
-    alerts = [normalize(parse_line(line.raw, Limits())) for line in lines]
+    records = [parse_line(line.raw, Limits()) for line in lines]
+    alerts = [normalize(record) for record in records]
     assert all(a.occurred_at.tzinfo is UTC for a in alerts)
-    assert all(a.kind.startswith("windows.security.") for a in alerts)
+    for record, alert in zip(records, alerts, strict=True):
+        channel = {"Sec": "security", "Sys": "system"}[record["Channel"]]
+        assert alert.kind == f"windows.{channel}.{record['EventID']}"
     assert all(a.severity != "unknown" for a in alerts)
     rendered = "\n".join(render_alert(a)[1] + json.dumps(render_alert(a)[0]) for a in alerts)
     assert "Sintetis-Bukan-Rahasia1" not in rendered
@@ -66,3 +69,17 @@ def test_samples_normalize_and_render_without_secret(rel: str) -> None:
     if rel == "chains/svc-backup.jsonl":
         assert any(b"Sintetis-Bukan-Rahasia1" in line.raw for line in lines)
         assert any(a.account == "svc-backup" for a in alerts)
+
+
+def test_dataset_covers_all_scenarios_including_system_log() -> None:
+    assert {e["skenario"] for e in FILES.values()} == {
+        *[f"R{n}" for n in range(1, 8)],
+        *[f"J{n}" for n in range(1, 7)],
+        "D1",
+        "H1",
+    }
+    record = parse_line((FIXTURES / "benign/J5.jsonl").read_bytes().strip(), Limits())
+    alert = normalize(record)
+    assert alert.kind == "windows.system.104"
+    assert alert.account == "svc-arsiplog"
+    assert alert.severity == "medium"
