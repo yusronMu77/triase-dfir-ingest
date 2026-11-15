@@ -38,6 +38,16 @@ class Settings(AstriaSettings):
     read_callers: list[str] = ["svc:triage", "svc:verifier", "svc:api", "svc:dfir"]
     """Boleh membaca bukti dan alert (K18)."""
 
+    collector_enabled: bool = False
+    collector_keys: dict[str, Path] = Field(default_factory=dict)
+    """Key ID -> mounted secret file containing a 32-byte or longer hex HMAC key. Never inline keys."""
+    collector_age_recipient: str | None = None
+    collector_archive_root: Path = Path("/var/lib/astria/ingest/acquisitions")
+    collector_max_archive_bytes: int = Field(20 * 1024 * MIB, ge=128)
+    collector_upload_timeout_s: int = Field(3600, ge=1, le=86400)
+    device_scan_users: list[str] = Field(default_factory=list)
+    """Explicitly authorized identity user IDs; admin/dfir role alone is insufficient."""
+
     @property
     def limits(self) -> Limits:
         return Limits(
