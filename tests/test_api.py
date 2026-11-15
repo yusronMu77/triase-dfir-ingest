@@ -163,6 +163,7 @@ def test_evidence_item_matches_verifier_contract() -> None:
         account="svc-backup",
         kind="windows.security.4688",
         event_id=4688,
+        rule_id="e87bd730-df45-4ae9-85de-6c75369c5d29",
         rule_title="Proc Exec",
         details={"Cmdline": "net user adm-support Sintetis-Bukan-Rahasia1 /add", "PID": 4312, "User": "svc-backup"},
         extra={"ParentProcessName": "C:\\Windows\\System32\\cmd.exe"},
@@ -173,6 +174,7 @@ def test_evidence_item_matches_verifier_contract() -> None:
     assert parsed["sha256"] == "a" * 64
     assert "EventID=4688" in parsed["teks"]
     assert parsed["fields"]["User"] == "svc-backup"
+    assert payload["items"][0]["rule_id"] == "e87bd730-df45-4ae9-85de-6c75369c5d29"
     assert parsed["fields"]["PID"] == "4312"
     assert payload["items"][0]["occurred_at"] == "2026-11-10T02:24:40.118000Z"
     assert "Sintetis-Bukan-Rahasia1" not in str(payload)
