@@ -115,6 +115,12 @@ def test_import_then_read_like_verifier_and_triage(setup) -> None:
     ranged = client.get(f"/svc/v1/jobs/{job_id}/alerts?from=24&to=26", headers=_auth(key, "svc:triage")).json()
     assert [a["evidence_ids"] for a in ranged["items"]] == [["EV-hb01-000024"], ["EV-hb01-000025"], ["EV-hb01-000026"]]
     assert any("S0039" in a["techniques"] for a in ranged["items"])
+    # Penjelas Alert di api memetakan bukti kartu ke RuleID lewat item bukti, jadi harus sama dengan alert-nya.
+    rules = {a["evidence_ids"][0]: a["rule_id"] for a in page1["items"] + page2["items"]}
+    assert {i["evidence_id"]: i["rule_id"] for i in batch["items"]} == {
+        i: rules[i] for i in ("EV-hb01-000001", "EV-hb01-000024")
+    }
+    assert all(isinstance(i["rule_id"], str) for i in batch["items"])
 
 
 @pytest.mark.parametrize(

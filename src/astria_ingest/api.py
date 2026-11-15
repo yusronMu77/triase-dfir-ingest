@@ -171,6 +171,7 @@ class EvidenceItem(BaseModel):
     host: str
     account: str | None
     kind: str
+    rule_id: str | None
     fields: dict[str, str]
     excerpt: str
     sanitized: bool = True
@@ -193,6 +194,7 @@ def evidence_item(row: Any) -> EvidenceItem:
         host=clean(row.host, 256),
         account=clean(row.account, 256) if row.account is not None else None,
         kind=row.kind,
+        rule_id=row.rule_id,
         fields=render_fields(row.details or {}, row.extra or {}),
         excerpt=render_excerpt(row.event_id, row.rule_title, row.details or {}),
         injection_suspect=row.injection_suspect,
@@ -212,6 +214,7 @@ _EVIDENCE_COLUMNS = (
     evidence.c.details,
     evidence.c.extra,
     evidence.c.injection_suspect,
+    alert.c.rule_id,
     alert.c.rule_title,
 )
 
